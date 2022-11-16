@@ -9,7 +9,8 @@
 
 #include "derivative.h" /* include peripheral declarations */
 
-unsigned char resultado_ADC;
+unsigned char resultado_canales[3];
+unsigned char secuencia_canales[]={(1<<6)+14,(1<<6)+12,(1<<6)+13};
 unsigned short i;
 unsigned short valor_mv;
 unsigned char cont;
@@ -20,7 +21,9 @@ unsigned short velocidad_w;
 unsigned short velocidad_max=0;
 unsigned short mVout;
 unsigned short periodo;
-
+unsigned char ADC_selector=0;
+unsigned char temperatura;
+unsigned short corriente; 
 
 void DAC0_init(void) 
 {
@@ -45,7 +48,7 @@ void PIT_IRQHandler()
 	if (PIT_TFLG0==1)
 	{
 	PIT_TFLG0=1; //Apaga bandera
-	ADC0_SC1A=(1<<6)+9; //Canal 9 (PTB1), inicia conversion
+	ADC0_SC1A=secuencia_canales[ADC_selector];
 	
 	}
 	if (PIT_TFLG1==1)
@@ -84,9 +87,6 @@ void FTM0_IRQHandler()
 		
 		//enviar velocidad por el DAC
 		mVout=(24*velocidad_max+11651)/10; //conversion de velocidad max a voltje de ref (formula de caracterizacion)
-		i=(mVout*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
-		DAC0_DAT0L = i & 0xff; 	//write low byte
-		DAC0_DAT0H = (i >> 8);	// write high byte
 	}
 }
 
@@ -95,11 +95,13 @@ void FTM0_IRQHandler()
 void ADC0_IRQHandler() //ADC_ISR tomado de Project_Settings>Startup_Code>kinetis_sysinit.c
 {
 	//Apaga bandera 
-	resultado_ADC=ADC0_RA; // Resultado del ADC, Apaga COCO
-	valor_mv=(resultado_ADC*3300)/255;
-	i=(valor_mv*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
-	DAC0_DAT0L = i & 0xff; 	//write low byte
-	DAC0_DAT0H = (i >> 8);	// write high byte
+	resultado_canales[ADC_selector++]=ADC0_RA; //Resultado ADC
+	if (ADC_selector==3) ADC_selector=0;
+	valor_mv=(resultado_canales[0]*3300)/255;
+	temperatura=(((resultado_canales[1]*3300)/255)/10);
+	corriente=((resultado_canales[2]*3300)/255)/10;
+
+	
 }
 
 void PORTA_IRQHandler()
@@ -147,9 +149,6 @@ int main(void)
 	PIT_MCR=0;
 	PIT_LDVAL0=100000;  //100 ms entre cada channel, clk : 4 MHz
 	PIT_TCTRL0=3; //TEN=1, TIEN=1
-	PIT_LDVAL1=100000;  //100 ms entre cada channel, clk : 4 MHz
-	PIT_TCTRL1=3; //TEN=1, TIEN=1
-	
 	
 	
 	SIM_SCGC5|=(1<<9);    //PORTA
@@ -164,6 +163,7 @@ int main(void)
 	// despues de un reset los pines de GPIO son entrada.
 	PORTA_PCR16|=(1<<8)+(11<<16);
 	NVIC_ISER=(1<<30);
+	NVIC_ISER=(1<<22); //Intr PIT
 	
 	
 	
@@ -171,7 +171,7 @@ int main(void)
 	{
 		if (cont==1 && autom==1)
 		{
-			NVIC_ICER=(1<<22); //Intr PIT
+			//NVIC_ICER=(1<<22); //Intr PIT
 			NVIC_ICER=(1<<17);    // Intr NVIC TPM0
 			valor_mv=0;
 			tv=0;
@@ -186,11 +186,17 @@ int main(void)
 		}
 		else if (cont==2)
 		{
-			NVIC_ISER=(1<<22); //Intr PIT
+			//NVIC_ISER=(1<<22); //Intr PIT
+			i=(valor_mv*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+			DAC0_DAT0L = i & 0xff; 	//write low byte
+			DAC0_DAT0H = (i >> 8);	// write high byte
 		}
 		else if (autom==2)
 		{
 			NVIC_ISER=(1<<17);    // Intr NVIC TPM0
+			i=(mVout*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+			DAC0_DAT0L = i & 0xff; 	//write low byte
+			DAC0_DAT0H = (i >> 8);	// write high byte
 		}
 	}
 	return 0;
