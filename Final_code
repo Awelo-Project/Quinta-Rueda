@@ -10,7 +10,7 @@
 #include "derivative.h" /* include peripheral declarations */
 
 unsigned char resultado_canales[3];
-unsigned char secuencia_canales[]={(1<<6)+14,(1<<6)+12,(1<<6)+13};
+unsigned char secuencia_canales[]={(1<<6)+14,(1<<6)+12,(1<<6)+13,(1<<6)+6};
 unsigned short i;
 unsigned short valor_mv;
 unsigned char cont;
@@ -98,6 +98,8 @@ void ADC0_IRQHandler() //ADC_ISR tomado de Project_Settings>Startup_Code>kinetis
 	resultado_canales[ADC_selector++]=ADC0_RA; //Resultado ADC
 	if (ADC_selector==3) ADC_selector=0;
 	valor_mv=(resultado_canales[0]*3300)/255;
+	valor_mv=(4668*valor_mv+12200000)/10000;
+	//valor_mv=(resultado_canales[0])*5+1230;
 	temperatura=(((resultado_canales[1]*3300)/255)/10);
 	corriente=((resultado_canales[2]*3300)/255)/10;
 
@@ -179,7 +181,7 @@ int main(void)
 			velocidad_max=0;
 			mVout=0;
 			i=0;
-			i=(valor_mv*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+			i=(i*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
 			DAC0_DAT0L = i & 0xff; 	//write low byte
 			DAC0_DAT0H = (i >> 8);	// write high byte
 			
