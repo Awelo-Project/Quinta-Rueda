@@ -1,13 +1,13 @@
 #include "derivative.h" /* include peripheral declarations */
 
 
-unsigned char secuencia_canales[]={(1<<6)+14,(1<<6)+12,};
+unsigned char secuencia_canales[]={(1<<6)+14,(1<<6)+13,(1<<6)+12};
 unsigned char resultado_canales[2];
 unsigned char ADC_selector=0;
 unsigned char temperatura_antes;
 unsigned char temperatura;
 unsigned short corriente; 
-//unsigned char extra;
+unsigned char extra;
 
 
 void ADC0_IRQHandler()
@@ -15,7 +15,7 @@ void ADC0_IRQHandler()
 	resultado_canales[ADC_selector++]=ADC0_RA; //Resultado ADC
 	if (ADC_selector==2) ADC_selector=0;
 	temperatura_antes=resultado_canales[0];
-	temperatura=(((temperatura_antes*3300)/255))/10;
+	temperatura=((((temperatura_antes*3300)/255))/10)+9;
 	//corriente=resultado_canales[1];
 	corriente=((resultado_canales[1]*3300)/255)/10;
 	//extra=((resultado_canales[2]*3300)/255)/10;
@@ -62,4 +62,5 @@ int main(void)
 	while (1);
 	return 0;
 }
+
 
