@@ -9,7 +9,8 @@
 
 #include "derivative.h" /* include peripheral declarations */
 
-unsigned char resultado_ADC;
+unsigned char resultado_canales[3];
+unsigned char secuencia_canales[]={(1<<6)+14,(1<<6)+12,(1<<6)+13,(1<<6)+6};
 unsigned short i;
 unsigned short valor_mv;
 unsigned char cont;
@@ -20,7 +21,18 @@ unsigned short velocidad_w;
 unsigned short velocidad_max=0;
 unsigned short mVout;
 unsigned short periodo;
-
+unsigned char ADC_selector=0;
+unsigned char temperatura;
+unsigned short corriente; 
+unsigned char erase;
+unsigned char aux;
+unsigned char dato_disponible;
+unsigned long velocidad_l=0;
+unsigned char mensaje[]={"Velocidad: ### rpm \n\r"};
+unsigned short digito;
+unsigned char prued;
+unsigned short i_2;
+unsigned short blue_vol;
 
 void DAC0_init(void) 
 {
@@ -45,12 +57,42 @@ void PIT_IRQHandler()
 	if (PIT_TFLG0==1)
 	{
 	PIT_TFLG0=1; //Apaga bandera
-	ADC0_SC1A=(1<<6)+9; //Canal 9 (PTB1), inicia conversion
+	ADC0_SC1A=secuencia_canales[ADC_selector];
 	
 	}
 	if (PIT_TFLG1==1)
 	{
 		PIT_TFLG1=1; //Apaga bandera
+		//aux=1;
+		if (digito<10)
+			mensaje[13]=digito + 0x30;
+			mensaje[12]=0 + 0x30;
+			mensaje[11]=0 + 0x30;
+		if (digito>10)
+		{
+			mensaje[11]=0 + 0x30;
+			mensaje[13]=digito%10 + 0x30;
+			mensaje[12]=digito/10 + 0x30;
+		}
+		if (digito>=100)
+		{
+			mensaje[13]=digito%10 + 0x30;
+			digito=digito/10;
+			mensaje[12]=digito%10 + 0x30;
+			mensaje[11]=digito/10 + 0x30;
+		}
+		do{
+			do{} while((UART0_S1 &(1<<7))==0);
+			UART0_D=mensaje[i_2++];
+		}while(mensaje[i_2]!=0);
+		i_2=0;
+		//digito=0;
+		//aux=0;
+		//UART0_C2=(1<<3)+(1<<7); //Transmit Enable, TIE para transmision
+		//TPM0_C2SC=(2<<2)+(1<<6);     //input capture, falling edge, CHIE=1
+		//NVIC_ISER=(1<<12);
+		
+		
 		
 	}
 	
@@ -69,7 +111,13 @@ void FTM0_IRQHandler()
 		periodo=TPM0_C2V-tv;
 		//frecuencia=1/periodo
 		frecuencia=(1000000/periodo)/4; // div 4 por que preescaler=16
-		if (frecuencia<175)
+		
+		if (frecuencia==0)
+		{
+			velocidad_w=0;
+			tv=TPM0_C2V; 
+		}
+		else if (frecuencia<175)
 		{
 			velocidad_w=(((frecuencia*1000)/15)*60)/1000;// normalizado a 1000
 			tv=TPM0_C2V; 								 // tiempo viejo se guarda en value del timer 
@@ -80,13 +128,10 @@ void FTM0_IRQHandler()
 			velocidad_max=velocidad_w;
 	
 		}
-
+		digito=velocidad_w;
 		
 		//enviar velocidad por el DAC
 		mVout=(24*velocidad_max+11651)/10; //conversion de velocidad max a voltje de ref (formula de caracterizacion)
-		i=(mVout*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
-		DAC0_DAT0L = i & 0xff; 	//write low byte
-		DAC0_DAT0H = (i >> 8);	// write high byte
 	}
 }
 
@@ -95,11 +140,43 @@ void FTM0_IRQHandler()
 void ADC0_IRQHandler() //ADC_ISR tomado de Project_Settings>Startup_Code>kinetis_sysinit.c
 {
 	//Apaga bandera 
-	resultado_ADC=ADC0_RA; // Resultado del ADC, Apaga COCO
-	valor_mv=(resultado_ADC*3300)/255;
-	i=(valor_mv*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
-	DAC0_DAT0L = i & 0xff; 	//write low byte
-	DAC0_DAT0H = (i >> 8);	// write high byte
+	resultado_canales[ADC_selector++]=ADC0_RA; //Resultado ADC
+	if (ADC_selector==3) ADC_selector=0;
+	valor_mv=(resultado_canales[0]*3300)/255;
+	valor_mv=(valor_mv-0)*(2800-1240)/(3300-0)+1240;
+	temperatura=(((resultado_canales[1]*3300)/255)/10);
+	corriente=((resultado_canales[2]*3300)/255)/10;
+
+	
+}
+
+void UART0_Rx_clean(void)
+{
+	unsigned char temp;
+	UART0_S1|=0x1F;
+	do{
+		UART0_S1|=0x1F;
+	if ((UART0_S1 & (1<<5))!=0) temp=UART0_D;
+	}while ((UART0_S1)!=0xC0);
+}
+
+
+
+void UART0_IRQHandler()
+{
+unsigned char temp;
+	if ((UART0_S1 & (1<<5))==(1<<5))
+	{
+		temp=UART0_D;
+		if ((temp!=13) && (temp>='0') && (temp<='9')) velocidad_l=(velocidad_l*10)+temp-0x30;
+		if (temp==13)
+		{
+		dato_disponible=1;
+		NVIC_ICER=(1<<12);
+		}
+		
+	}
+	NVIC_ICER=(1<<12);
 }
 
 void PORTA_IRQHandler()
@@ -131,6 +208,23 @@ void PORTA_IRQHandler()
 			
 }
 
+void PORTD_IRQHandler()
+{
+	
+	SIM_SCGC6|=(1<<23); //PIT
+	PIT_MCR=1;
+	PIT_LDVAL1=500000;  //500 ms entre cada channel, clk : 4 MHz
+	PIT_TCTRL1=3; //TEN=1, TIEN=1
+	
+	SIM_SCGC4|=(1<<10); 			//UART0
+	PORTA_PCR1=(2<<8); 				//UART0
+	PORTA_PCR2=(2<<8); 				//UART0
+	UART0_BDL=26; 					//baud_rate (9600)=4MHz/(16*9600)
+	UART0_C2=12+(1<<6)+(1<<7); 			//TEN=REN=1. Hab Intr Rx
+	UART0_Rx_clean();
+	NVIC_ISER=(1<<12);
+	NVIC_ICER=(1<<31);
+}
 
 
 
@@ -147,9 +241,6 @@ int main(void)
 	PIT_MCR=0;
 	PIT_LDVAL0=100000;  //100 ms entre cada channel, clk : 4 MHz
 	PIT_TCTRL0=3; //TEN=1, TIEN=1
-	PIT_LDVAL1=100000;  //100 ms entre cada channel, clk : 4 MHz
-	PIT_TCTRL1=3; //TEN=1, TIEN=1
-	
 	
 	
 	SIM_SCGC5|=(1<<9);    //PORTA
@@ -163,34 +254,87 @@ int main(void)
 	PORTA_PCR17|=(1<<8)+(11<<16); //B: PTA15 sea GPIO, Intr rising edge (subida) hab intr. 
 	// despues de un reset los pines de GPIO son entrada.
 	PORTA_PCR16|=(1<<8)+(11<<16);
+	
+	//init Port D
+	SIM_SCGC5|=(1<<12);
+	PORTD_PCR4=(1<<8)+(9<<16);
+	
+
+	
+	
+	NVIC_ISER=(1<<31);
 	NVIC_ISER=(1<<30);
-	
-	
+	NVIC_ISER=(1<<22); //Intr PIT
+	NVIC_ISER=(1<<12);
+	NVIC_IPR4=(1<<14);
 	
 	while(1)
 	{
 		if (cont==1 && autom==1)
-		{
-			NVIC_ICER=(1<<22); //Intr PIT
-			NVIC_ICER=(1<<17);    // Intr NVIC TPM0
-			valor_mv=0;
-			tv=0;
-			velocidad_w=0;
-			velocidad_max=0;
-			mVout=0;
-			i=0;
-			i=(valor_mv*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
-			DAC0_DAT0L = i & 0xff; 	//write low byte
-			DAC0_DAT0H = (i >> 8);	// write high byte
+		{		
+				//aux=0;
+				if (aux==0)
+				{
+					valor_mv=0;
+					tv=0;
+					velocidad_w=0;
+					velocidad_max=0;
+					velocidad_l=0;
+					mVout=0;
+					i=0;
+					DAC0_DAT0L = i & 0xff; 	//write low byte
+					DAC0_DAT0H = (i >> 8);	// write high byte
+					//dato_disponible=1;
+					aux=4;
+				}
+
+				if (dato_disponible==1)
+				{
+					//aux++;
+					NVIC_ISER=(1<<17);    // Intr NVIC TPM0
+					blue_vol=(24*velocidad_l+11651)/10; //conversion de velocidad max a voltje de ref (formula de caracterizacion)
+					i=(blue_vol*4095/3300);
+					DAC0_DAT0L = i & 0xff; 	//write low byte
+					DAC0_DAT0H = (i >> 8);	// write high byte
+					velocidad_l=0;
+					dato_disponible=0;	
+				}
+				NVIC_ISER=(1<<12);
+				
 			
 		}
 		else if (cont==2)
 		{
-			NVIC_ISER=(1<<22); //Intr PIT
+			aux=0;
+			//NVIC_ISER=(1<<22); //Intr PIT
+			if (valor_mv==1240) valor_mv=0;
+			i=(valor_mv*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+			DAC0_DAT0L = i & 0xff; 	//write low byte
+			DAC0_DAT0H = (i >> 8);	// write high byte
 		}
 		else if (autom==2)
 		{
+			if (aux==4)
+			{
+				valor_mv=0;
+				tv=0;
+				velocidad_w=0;
+				velocidad_max=0;
+				velocidad_l=0;
+				mVout=0;
+				periodo=0;
+				frecuencia=0;
+				i=0;
+				DAC0_DAT0L = i & 0xff; 	//write low byte
+				DAC0_DAT0H = (i >> 8);	// write high byte
+				//dato_disponible=1;
+				aux=5;
+			}
+			aux=0;
 			NVIC_ISER=(1<<17);    // Intr NVIC TPM0
+			i=(mVout*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+			DAC0_DAT0L = i & 0xff; 	//write low byte
+			DAC0_DAT0H = (i >> 8);	// write high byte
 		}
 	}
 	return 0;
