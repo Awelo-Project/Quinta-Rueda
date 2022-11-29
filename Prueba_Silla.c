@@ -30,7 +30,7 @@ unsigned char dato_disponible;
 unsigned long velocidad_l=0;
 unsigned char mensaje[]={"###\n"};
 unsigned short digito;
-unsigned char prued;
+unsigned char back=0;
 unsigned short i_2;
 unsigned short blue_vol;
 
@@ -59,7 +59,7 @@ SIM_SOPT2|=15<<24;			//Seleccion MCGIRCLK tanto para UART0 como para TPM
 
 void tempWaring(temperatura)
 {	
-	if (temperatura>=28) // verifica que la temperatura
+	if (temperatura>=40) // verifica que la temperatura
 	{	
 		//inicia conteo
 		SIM_SCGC6|=(1<<23); //PIT
@@ -67,12 +67,17 @@ void tempWaring(temperatura)
 		PIT_LDVAL1=1000000;  //500 ms entre cada channel, clk : 4 MHz
 		PIT_TCTRL1=3; //TEN=1, TIEN=1
 		//NVIC_ISER=(1<<22); //Intr PIT
+		
 	}	
 	else
 	{
-		//PIT_LDVAL1=500000;  //500 ms entre cada channel, clk : 4 MHz
-		//PIT_TCTRL1=0; //TEN=1, TIEN=1
-		//DAC0_C0 |= (1<<7);    	// Disable DAC 
+		if (back>=1)
+		{
+			//TPM1_SC=15; //clk 4 MHz, preescaler=128
+			//TPM1_C0SC=(9<<2);
+			//DAC0_init();
+			back=0;
+		}
 	}
 }
 
@@ -118,6 +123,7 @@ void PIT_IRQHandler()
 	if (PIT_TFLG1==1)
 	{
 		PIT_TFLG1=1; //Apaga bandera
+		cont_temp++;
 		if (cont_temp%2==0)//
 		{
 			//GPIOA_PDOR=(1<<12); //prende el buzzer. 
@@ -139,19 +145,35 @@ void PIT_IRQHandler()
 			TPM1_C0V=(duty_cycle*peri)/100;
 			
 		}
-		if (cont_temp>=10)
+		if (cont_temp>=100)
 		{
 			
 			//GPIOA_PDOR=0; //apaga el buzzer.
-			TPM1_C0SC=0;
-			cont_temp=0;
-			//PIT_LDVAL1=1000000;  //500 ms entre cada channel, clk : 4 MHz
-			PIT_TCTRL1=0; //TEN=1, TIEN=1
+			//secuencia_canales[0]=0;
+			back++;
+			i=0;
+			DAC0_DAT0L = i & 0xff; 	//write low byte
+			DAC0_DAT0H = (i >> 8);	// write high byte
+			DAC0_C0 |= (0<<7);    	// Disable DAC 
+			SIM_SCGC6 |= (0<<31);   		// clock to DAC module SIM_SCG6=SIMSCG6|(1<<31)
 			
-			//DAC0_C0 |= (0<<7);    	// Disable DAC 
+			TPM1_C0SC=0;
+			duty_cycle=0;
+			TPM1_C0V=(duty_cycle*peri)/100;
+			cont_temp=0;
+			PIT_TCTRL1=0; 
+			PIT_TCTRL0=3; //TEN=1, TIEN=1
+			valor_mv=0;
+			tv=0;
+			velocidad_w=0;
+			velocidad_max=0;
+			velocidad_l=0;
+			mVout=0;
+			blue_vol=0;
+			
 			//NVIC_ICER=(1<<22); //Intr PIT	
 		}
-		cont_temp++;
+		
 
 		
 	}
@@ -371,13 +393,22 @@ int main(void)
 		}
 		else if (cont==2)
 		{
-			aux=0;
-			NVIC_ISER=(1<<22); //Intr PIT
-			NVIC_ISER=(1<<17);    // Intr NVIC TPM0
-			if (valor_mv==1240) valor_mv=0;
-			i=(valor_mv*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
-			DAC0_DAT0L = i & 0xff; 	//write low byte
-			DAC0_DAT0H = (i >> 8);	// write high byte
+			if (back==0)
+			{
+				aux=0;
+				NVIC_ISER=(1<<22); //Intr PIT
+				NVIC_ISER=(1<<17);    // Intr NVIC TPM0
+				if (valor_mv==1240) valor_mv=0;
+				i=(valor_mv*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+				DAC0_DAT0L = i & 0xff; 	//write low byte
+				DAC0_DAT0H = (i >> 8);	// write high byte
+			}
+			else
+			{
+				i=0;//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+				DAC0_DAT0L = i & 0xff; 	//write low byte
+				DAC0_DAT0H = (i >> 8);	// write high byte
+			}
 		}
 		else if (autom==2)
 		{
