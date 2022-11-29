@@ -9,8 +9,10 @@
 
 #include "derivative.h" /* include peripheral declarations */
 
-unsigned char temp=60;
+unsigned char temp=65;
 unsigned char cont_temp=0;
+unsigned char duty_cycle;
+unsigned char peri;
 
 void tempWaring(temperatura)
 {	
@@ -35,24 +37,42 @@ void PIT_IRQHandler()
 			
 			if (cont_temp%2==0)//
 			{
-				GPIOA_PDOR=(1<<12); //prende el buzzer. 
+				//GPIOA_PDOR=(1<<12); //prende el buzzer. 
+				
+				duty_cycle=75;
+				TPM1_C0V=(duty_cycle*peri)/100;
 			}
 			if (cont_temp%2!=0)
 			{
-				GPIOA_PDOR=0; //apaga el buzzer.
+				//GPIOA_PDOR=0; //apaga el buzzer.
+
+				duty_cycle=0;
+				TPM1_C0V=(duty_cycle*peri)/100;
 			}
-			if (cont_temp>=5)
+			if (cont_temp>=60)
 			{
-				NVIC_ICER=(1<<22); //Intr PIT	
-				GPIOA_PDOR=0; //apaga el buzzer.
+				
+				//GPIOA_PDOR=0; //apaga el buzzer.
+				TPM1_C0SC=0;
 				cont_temp=0;
 				//DAC0_C0 |= (0<<7);    	// Disable DAC 
+				NVIC_ICER=(1<<22); //Intr PIT	
 			}
 			cont_temp++;
 		}	
 	
 }
 	
+void clk_init (void)
+{
+	// FIRC = 4 MHz. BusClk = 4 MHz
+	// UART0: FIRC. UART1: BusClk. UART2: BusClk. TPM: FIRC. IIC: BusClk. PIT:
+	MCG_C1|=(1<<6) + (1<<1); //MCGOUTCLK : IRCLK. CG: Clock gate, MCGIRCLK enable pag 116
+	MCG_C2|=1; //Mux IRCLK : FIRC (4 MHz) pag 116
+	MCG_SC=0; //Preescaler FIRC 1:1 pag 116
+	SIM_CLKDIV1=0; //OUTDIV4=OUTDIV1= 1:1 pag 116. Busclk 4 MHz
+	SIM_SOPT2|=15<<24; //Seleccion MCGIRCLK tanto para UART0 como para TPM
+}
 
 
 int main(void)
@@ -60,18 +80,37 @@ int main(void)
 	//PIT
 	SIM_SCGC6|=(1<<23); 
 	PIT_MCR=0;
-	PIT_LDVAL1=10000000;  //1s por interrupcion, clk : 4 MHz
+	PIT_LDVAL1=5000000;  //1s por interrupcion, clk : 4 MHz
 	
 	
 	
 	//GPIO BUZZER
-		SIM_SCGC5|=(1<<9); 
-		PORTA_PCR12|=(1<<8); //PTA12 sea GPIO
-		GPIOA_PDDR|=(1<<12);
+	//SIM_SCGC5|=(1<<9); 
+	//PORTA_PCR12|=(1<<8); //PTA12 sea GPIO
+	//GPIOA_PDDR|=(1<<12);
+	
+	// TPM init
+	clk_init();
+	SIM_SCGC5|=(1<<13); //PORTE
+	PORTE_PCR20=(3<<8); //TPM1_C0
+	SIM_SCGC6|=(1<<25); //TPM1
+	
+	TPM1_SC=15; //clk 4 MHz, preescaler=128
+	//TPM1_MOD=31250;
+	peri=(6250/1000);
+	TPM1_MOD=peri;
+	TPM1_C0SC=(9<<2); //PWM edge aligned, set on match
+	//duty_cycle=75;
+	duty_cycle=75;
+	TPM1_C0V=(duty_cycle*peri)/100;
+	
+
+
+
+	while (1)
+	{
 		tempWaring(temp);
-
-
-
-	while (1);
+	}
 	return 0;
 }
+
