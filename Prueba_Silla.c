@@ -10,7 +10,7 @@
 #include "derivative.h" /* include peripheral declarations */
 
 unsigned char resultado_canales[3];
-unsigned char secuencia_canales[]={(1<<6)+14,(1<<6)+12,(1<<6)+13,(1<<6)+6};
+unsigned char secuencia_canales[]={(1<<6)+12,(1<<6)+11,(1<<6)+14,(1<<6)+13}; // PTB2,PTC2, PTC0, PTB3
 unsigned short i;
 unsigned short valor_mv;
 unsigned char cont;
@@ -38,6 +38,9 @@ unsigned char temperatura;
 unsigned char cont_temp=0;
 unsigned char duty_cycle;
 unsigned char peri;
+unsigned char itera;
+unsigned char compare;
+unsigned char bateria;
 
 void DAC0_init(void) 
 {
@@ -73,14 +76,27 @@ void tempWaring(temperatura)
 	{
 		if (back>=1)
 		{
-			//TPM1_SC=15; //clk 4 MHz, preescaler=128
-			//TPM1_C0SC=(9<<2);
-			//DAC0_init();
 			back=0;
 		}
 	}
 }
 
+void check_battery(bateria)
+{
+	if (bateria<2280)
+	{
+		back++;
+		i=0;
+		DAC0_DAT0L = i & 0xff; 	//write low byte
+		DAC0_DAT0H = (i >> 8);	// write high byte
+		DAC0_C0 |= (0<<7);    	// Disable DAC 
+		SIM_SCGC6 |= (0<<31);   		// clock to DAC module SIM_SCG6=SIMSCG6|(1<<31)
+	}
+	else 
+	{
+		back=0;
+	}
+}
 
 void PIT_IRQHandler()
 {
@@ -192,28 +208,52 @@ void FTM0_IRQHandler()
 		TPM0_C2SC |=(1<<7);
 		periodo=TPM0_C2V-tv;
 		//frecuencia=1/periodo
-		frecuencia=(1000000/periodo)/4; // div 4 por que preescaler=16
+		frecuencia=(1000000/periodo)/32; // div 4 por que preescaler=16
 		
-		if (frecuencia==0)
+		if (frecuencia<10)// esto solo sirve para que se vea un cero en bluethooth
 		{
 			velocidad_w=0;
 			tv=TPM0_C2V; 
+			if (velocidad_w<velocidad_max)
+			{
+				//velocidad_max=velocidad_w;
+				//itera++;
+				
+				if (itera>=10)
+				{
+					velocidad_max=velocidad_w;
+					itera=0;
+				}
+		
+			}
+			digito=velocidad_w;
 		}
 		else if (frecuencia<175)
 		{
 			velocidad_w=(((frecuencia*1000)/15)*60)/1000;// normalizado a 1000
-			tv=TPM0_C2V; 								 // tiempo viejo se guarda en value del timer 
+			tv=TPM0_C2V; 								 // tiempo viejo se guarda en value del timer
+			
+			if (velocidad_max<velocidad_w)
+			{
+				itera++;
+				//velocidad_max=velocidad_w;
+				//itera=0;
+				
+				if (itera>=10)
+				{
+					compare=velocidad_w+10;
+					if (compare<velocidad_w)
+					{
+						velocidad_max=velocidad_w;
+						itera=0;
+					}
+				}
+		
+			}
+			digito=velocidad_w;
 		}
 		//comparar velocidad nueva vs max 
-		if (velocidad_w>velocidad_max)
-		{
-			velocidad_max=velocidad_w;
-	
-		}
-		digito=velocidad_w;
-		
-		//enviar velocidad por el DAC
-		mVout=(24*velocidad_max+11651)/10; //conversion de velocidad max a voltje de ref (formula de caracterizacion)
+
 	}
 }
 
@@ -223,11 +263,12 @@ void ADC0_IRQHandler() //ADC_ISR tomado de Project_Settings>Startup_Code>kinetis
 {
 	//Apaga bandera 
 	resultado_canales[ADC_selector++]=ADC0_RA; //Resultado ADC
-	if (ADC_selector==3) ADC_selector=0;
+	if (ADC_selector==4) ADC_selector=0;
 	valor_mv=(resultado_canales[0]*3300)/255;
 	valor_mv=(valor_mv-0)*(2800-1240)/(3300-0)+1240;
 	temperatura=(((resultado_canales[1]*3300)/255)/10);
 	corriente=((resultado_canales[2]*3300)/255)/10;
+	bateria=(resultado_canales[3]*3300)/255;
 
 	
 }
@@ -319,7 +360,7 @@ int main(void)
 	SIM_SCGC5|=(1<<9);    //PORTA
 	PORTA_PCR5=(3<<8);    //TPM0_CH2
 	SIM_SCGC6|=(1<<24);   //TPM0
-	TPM0_SC=(1<<3)+4;   //CMOD=1 (4 mHz), preescaler 16
+	TPM0_SC=(1<<3)+7;   //CMOD=1 (4 mHz), preescaler 16
 	TPM0_C2SC=(2<<2)+(1<<6);     //input capture, falling edge, CHIE=1
 	
 	
@@ -334,8 +375,8 @@ int main(void)
 	
 	//PIT
 	
-	SIM_SCGC5|=(1<<13); //PORTE
-	PORTE_PCR20=(3<<8); //TPM1_C0
+	//SIM_SCGC5|=(1<<13); //PORTE
+	PORTA_PCR12=(3<<8); //TPM1_C0
 	SIM_SCGC6|=(1<<25); //TPM1
 	
 	TPM1_SC=15; //clk 4 MHz, preescaler=128
@@ -354,11 +395,12 @@ int main(void)
 	NVIC_ISER=(1<<30);
 	NVIC_ISER=(1<<22); //Intr PIT
 	NVIC_ISER=(1<<12);
-	NVIC_IPR4=(1<<14);
+	//NVIC_IPR4=(1<<14);
+	NVIC_ISER=(1<<17);    // Intr NVIC TPM0
 	
 	while(1)
 	{
-		if (cont==1 && autom==1)
+		if (cont==1 && autom==1)//neutro
 		{		
 				//aux=0;
 				if (aux==0)
@@ -375,23 +417,32 @@ int main(void)
 					//dato_disponible=1;
 					aux=4;
 				}
-
-				if (dato_disponible==1)
+				
+				if (back==0)
 				{
-					//aux++;
-					NVIC_ISER=(1<<17);    // Intr NVIC TPM0
-					blue_vol=(24*velocidad_l+11651)/10; //conversion de velocidad max a voltje de ref (formula de caracterizacion)
-					i=(blue_vol*4095/3300);
+					if (dato_disponible==1)
+					{
+						//aux++;
+						//NVIC_ISER=(1<<17);    // Intr NVIC TPM0
+						blue_vol=(24*velocidad_l+11651)/10; //conversion de velocidad max a voltje de ref (formula de caracterizacion)
+						i=(blue_vol*4095/3300);
+						DAC0_DAT0L = i & 0xff; 	//write low byte
+						DAC0_DAT0H = (i >> 8);	// write high byte
+						velocidad_l=0;
+						dato_disponible=0;	
+					}
+					NVIC_ISER=(1<<12);
+				}
+				else
+				{
+					i=0;//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
 					DAC0_DAT0L = i & 0xff; 	//write low byte
 					DAC0_DAT0H = (i >> 8);	// write high byte
-					velocidad_l=0;
-					dato_disponible=0;	
 				}
-				NVIC_ISER=(1<<12);
 				
 			
 		}
-		else if (cont==2)
+		else if (cont==2) //manual
 		{
 			if (back==0)
 			{
@@ -429,10 +480,22 @@ int main(void)
 				aux=5;
 			}
 			aux=0;
-			NVIC_ISER=(1<<17);    // Intr NVIC TPM0
-			i=(mVout*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
-			DAC0_DAT0L = i & 0xff; 	//write low byte
-			DAC0_DAT0H = (i >> 8);	// write high byte
+			
+
+			
+			if (back==0)
+			{
+				mVout=((24*velocidad_max+11651)/10); //conversion de velocidad max a voltje de ref (formula de caracterizacion)
+				i=(mVout*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+				DAC0_DAT0L = i & 0xff; 	//write low byte
+				DAC0_DAT0H = (i >> 8);	// write high byte
+			}
+			else 
+			{
+				i=0;//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+				DAC0_DAT0L = i & 0xff; 	//write low byte
+				DAC0_DAT0H = (i >> 8);	// write high byte
+			}
 		}
 	}
 	return 0;
