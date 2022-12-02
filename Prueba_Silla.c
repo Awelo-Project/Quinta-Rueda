@@ -9,7 +9,7 @@
 
 #include "derivative.h" /* include peripheral declarations */
 
-unsigned char resultado_canales[3];
+unsigned char resultado_canales[4];
 unsigned char secuencia_canales[]={(1<<6)+12,(1<<6)+11,(1<<6)+14,(1<<6)+13}; // PTB2,PTC2, PTC0, PTB3
 unsigned short i;
 unsigned short valor_mv;
@@ -40,6 +40,7 @@ unsigned char duty_cycle;
 unsigned char peri;
 unsigned char itera;
 unsigned char compare;
+unsigned short bateria; 
 
 void DAC0_init(void) 
 {
@@ -83,9 +84,9 @@ void tempWaring(temperatura)
 	}
 }
 
-void check_battery(bateria)
+void check_battery(batery)
 {
-	if (bateria<2280)
+	if (batery<2370)
 	{
 		back++;
 		i=0;
@@ -106,6 +107,7 @@ void PIT_IRQHandler()
 	{
 	PIT_TFLG0=1; //Apaga bandera
 	tempWaring(temperatura);
+	check_battery(bateria);
 	ADC0_SC1A=secuencia_canales[ADC_selector];
 	
 	if (digito<10)
@@ -212,7 +214,7 @@ void FTM0_IRQHandler()
 			//frecuencia=1/periodo
 			frecuencia=(1000000/periodo)/4; // div 4 por que preescaler=16
 			
-			if (frecuencia==0)
+			if (frecuencia<10)
 			{
 				velocidad_w=0;
 				tv=TPM0_C2V; 
@@ -257,11 +259,14 @@ void ADC0_IRQHandler() //ADC_ISR tomado de Project_Settings>Startup_Code>kinetis
 {
 	//Apaga bandera 
 	resultado_canales[ADC_selector++]=ADC0_RA; //Resultado ADC
-	if (ADC_selector==2) ADC_selector=0;
+	if (ADC_selector==4) ADC_selector=0;
 	valor_mv=(resultado_canales[0]*3300)/255;
 	valor_mv=(valor_mv-0)*(2800-1240)/(3300-0)+1240;
 	temperatura=(((resultado_canales[1]*3300)/255)/10);
-	corriente=((resultado_canales[2]*3300)/255)/10;
+	corriente=((resultado_canales[2]*3300)/255);
+	corriente=(2500-corriente)*10; //mA
+	bateria=(resultado_canales[3]*3300)/255;
+	
 
 	
 }
@@ -409,19 +414,29 @@ int main(void)
 					//dato_disponible=1;
 					aux=4;
 				}
-
+				
+				if (back==0)
+				{
+				
 				if (dato_disponible==1)
 				{
-					//aux++;
-					NVIC_ISER=(1<<17);    // Intr NVIC TPM0
-					blue_vol=(24*velocidad_l+11651)/10; //conversion de velocidad max a voltje de ref (formula de caracterizacion)
-					i=(blue_vol*4095/3300);
+						//aux++;
+						NVIC_ISER=(1<<17);    // Intr NVIC TPM0
+						blue_vol=(24*velocidad_l+11651)/10; //conversion de velocidad max a voltje de ref (formula de caracterizacion)
+						i=(blue_vol*4095/3300);
+						DAC0_DAT0L = i & 0xff; 	//write low byte
+						DAC0_DAT0H = (i >> 8);	// write high byte
+						velocidad_l=0;
+						dato_disponible=0;	
+					}
+					NVIC_ISER=(1<<12);
+				}
+				else
+				{
+					i=0;//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
 					DAC0_DAT0L = i & 0xff; 	//write low byte
 					DAC0_DAT0H = (i >> 8);	// write high byte
-					velocidad_l=0;
-					dato_disponible=0;	
 				}
-				NVIC_ISER=(1<<12);
 				
 			
 		}
@@ -464,11 +479,30 @@ int main(void)
 				//dato_disponible=1;
 				aux=5;
 			}
-			aux=0;
-			NVIC_ISER=(1<<17);    // Intr NVIC TPM0
-			i=(mVout*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
-			DAC0_DAT0L = i & 0xff; 	//write low byte
-			DAC0_DAT0H = (i >> 8);	// write high byte
+			if (back==0)
+			{
+				aux=0;
+				NVIC_ISER=(1<<17);    // Intr NVIC TPM0
+				i=(mVout*4095/3300);//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+				DAC0_DAT0L = i & 0xff; 	//write low byte
+				DAC0_DAT0H = (i >> 8);	// write high byte
+			}
+			else 
+			{
+				valor_mv=0;
+				tv=0;
+				frecuencia=0;
+				compare=0;
+				velocidad_w=0;
+				velocidad_max=0;
+				velocidad_l=0;
+				mVout=0;
+				periodo=0;
+				frecuencia=0;
+				i=0;//ul =unsigend long le idnica que esa variable debe ser una variable de 32bits sin unidad de medida 
+				DAC0_DAT0L = i & 0xff; 	//write low byte
+				DAC0_DAT0H = (i >> 8);	// write high byte
+			}
 		}
 	}
 	return 0;
